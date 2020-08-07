@@ -1,0 +1,110 @@
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log;
+pid /run/nginx.pid;
+
+# Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
+include /usr/share/nginx/modules/*.conf;
+
+events {
+    worker_connections 1024;
+}
+
+rtmp {
+    server {
+        # Port rtmp is listen to
+        listen 1935;
+        access_log /var/log/nginx/rtmp-access.log;
+
+        # Register a new application under rtmp://<host>/live
+        application live {
+            # enable live streaming
+            live on;
+
+            # For adaptive streaming all incoming streams are processed in 3
+            # different qualities and send to hls/$name $name_{low,mid,hi}.
+            # For more details take a look at
+            # https://github.com/arut/nginx-rtmp-module/wiki/Directives#exec
+            # and
+            # https://github.com/arut/nginx-rtmp-module/wiki/Directives#exec
+            exec ffmpeg -i rtmp://0.0.0.0:1935/live/$name
+              -c:a aac -b:a 32k  -c:v libx264 -b:v 128K -f flv rtmp://localhost:1935/hls/$name_low
+              -c:a aac -b:a 64k  -c:v libx264 -b:v 256k -f flv rtmp://localhost:1935/hls/$name_mid
+              -c:a aac -b:a 128k -c:v libx264 -b:v 512K -f flv rtmp://localhost:1935/hls/$name_hi;
+
+            # Enable MPEG-DASH. Unfortunately it seems like the Nginx RTMP
+            # module does not support deliver different dash variants, but
+            # there are forks that support this. For more information take a
+            # look at
+            # https://www.nginx.com/blog/video-streaming-for-remote-learning-with-nginx/
+            # and for a fork with support for dash_variant at
+            # https://github.com/justcodingtv/nginx-rtmp-module
+            dash on;
+            dash_path {{ video_directory }}/live/dash;
+
+            # Record all incoming streams. For more details take a look at
+            # https://github.com/arut/nginx-rtmp-module/wiki/Directives#record
+            record all;
+            record_path {{ video_directory }}/records/;
+            record_unique on;
+        }
+
+        # Register hls application for adaptive streaming. For more details
+        # take a look at
+        # https://github.com/arut/nginx-rtmp-module/wiki/Directives#hls
+        application hls {
+            live on;
+            hls on;
+            hls_nested on;
+            hls_path {{ video_directory}}/live/hls;
+            # Different varians for different bandwidths. For more details take
+            # a look at
+            # https://github.com/arut/nginx-rtmp-module/wiki/Directives#hls_variants
+            hls_variant _low BANDWIDTH=160000;
+            hls_variant _mid BANDWIDTH=320000;
+            hls_variant _hi  BANDWIDTH=640000;
+
+            # Record the different hls variants
+            record all;
+            record_path {{ video_directory }}/records/;
+            record_unique on;
+        }
+    }
+}
+
+http {
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for" $request_time';
+    access_log /var/log/nginx/access.log main;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    root {{ video_directory }};
+
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        # HLS and MPEG-DASH chunks are delivered via nginx http server. This
+        # makes it easy to scale this up if on the viewer site.
+        location /live {
+            types {
+                application/vnd.apple.mpegurl m3u8;
+                application/dash+xml mpd;
+            }
+        }
+
+        # Records are delivered from the directory. There is no adaptive
+        # selection of the quality. There seems to be also a video on demand
+        # functionality for Nginx RTMP, see
+        # https://github.com/arut/nginx-rtmp-module/wiki/Directives#video-on-demand
+        location /records {
+            autoindex on;
+        }
+    }
+}

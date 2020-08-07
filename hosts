@@ -1,0 +1,5 @@
+[nginx_rtmp]
+nginx-rtmp.stream.uos.de
+
+[srs]
+srs.stream.uos.de

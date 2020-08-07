@@ -1,0 +1,121 @@
+---
+
+- hosts: nginx_rtmp
+  become: true
+  vars:
+    video_directory: /media/rtmp
+  tasks:
+    # Create directory to store recorded videos and video chunks for live
+    # streaming nginx has to be able to read and write here. So the setype is
+    # changed.
+    - name: create video directory
+      file:
+        path: '{{ item }}'
+        recurse: true
+        owner: nginx
+        group: nginx
+        setype: httpd_sys_rw_content_t
+      with_items:
+        - '{{ video_directory }}/live'
+        - '{{ video_directory }}/records'
+      notify: restart nginx
+
+    # ffmpeg is connecting to nginx again to create different video qualities.
+    # So httpd needs to be able to connect to the network again.
+    - name: relax httpd selinux
+      seboolean:
+        name: httpd_can_network_connect
+        persistent: true
+        state: true
+      notify: restart nginx
+
+    # Nginx listen on 1935 for rtmp. So SELinux must allow this.
+    - name: allow port 1195 for httpd
+      seport:
+        ports: 1935
+        proto: tcp
+        setype: http_port_t
+
+    # Using another yum repository to install the rtmp nginx module. This has
+    # to be built with the proper nginx version and is built via copr. For
+    # details take a look at
+    # https://copr.fedorainfracloud.org/coprs/shaardie/nginx-rtmp/ and
+    # https://github.com/shaardie/rpm-nginx-rtmp
+    - name: enable rtmp copr repository per command, since the dnf module does not have support for it.
+      command:
+        cmd: dnf copr enable -y shaardie/nginx-rtmp
+        creates: /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:shaardie:nginx-rtmp.repo
+
+    - name: install epel-release
+      package:
+        name: epel-release
+
+    - name: enable PowerTools repository
+      ini_file:
+        dest: /etc/yum.repos.d/CentOS-PowerTools.repo
+        section: PowerTools
+        option: enabled
+        value: "1"
+
+    # RPM Fusion is used to install ffmpeg
+    - name: install rpmfusion
+      dnf:
+        name:
+          - https://download1.rpmfusion.org/free/el/rpmfusion-free-release-8.noarch.rpm
+          - https://download1.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-8.noarch.rpm
+
+    - name: install nginx
+      dnf:
+        name:
+          - nginx
+          - nginx-mod-rtmp
+          - ffmpeg
+        enable_plugin: PowerTools
+      notify: restart nginx
+
+    # rtmp is completetly configured via the nginx configuration. For details
+    # take a look at the template.
+    - name: configure nginx
+      template:
+        src: nginx-rtmp/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        force: true
+      notify: restart nginx
+
+    - name: enable and start nginx
+      service:
+        name: nginx
+        enabled: true
+        state: started
+
+    - name: http and https firewall settings
+      firewalld:
+        service: "{{ item }}"
+        permanent: true
+        state: enabled
+      with_items:
+        - http
+        - https
+      notify: reload firewalld
+
+    # This should probably only be accessible from withing the internal
+    # network. With this configuration everybody can publish videos.
+    - name: rtmp firewall settings (should probably be more restrictive)
+      firewalld:
+        port: 1935/tcp
+        permanent: true
+        state: enabled
+      notify: reload firewalld
+
+  handlers:
+    # Seems like some rtmp functionalities does not properly work after a
+    # reload. So restarting every time.
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: reload firewalld
+      service:
+        name: firewalld
+        state: reloaded
