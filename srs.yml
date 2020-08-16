@@ -1,0 +1,117 @@
+---
+
+- hosts: srs
+  become: true
+  vars:
+    srs_version: SRS-CentOS7-x86_64-3.0.141
+    srs_sha512: ca439d73b7cb01e70986a999467977a178bb37ca1015d499cacd3be8833e747b21c4f49343cb0caa2b6c68fa94211fb244159774289c425223f03f5382bb038c
+  tasks:
+    - name: enable PowerTools repository
+      ini_file:
+        dest: /etc/yum.repos.d/CentOS-PowerTools.repo
+        section: PowerTools
+        option: enabled
+        value: "1"
+
+    # RPM Fusion is used to install ffmpeg
+    - name: install rpmfusion
+      dnf:
+        name:
+          - https://download1.rpmfusion.org/free/el/rpmfusion-free-release-8.noarch.rpm
+          - https://download1.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-8.noarch.rpm
+
+    - name: install requirements
+      dnf:
+        name:
+          - unzip
+          - ffmpeg
+        enable_plugin: PowerTools
+
+    # Use the precompiled Binaries of SRS for Centos 7
+    - name: download srs
+      get_url:
+        url: https://ossrs.net/srs.release/releases/files/{{ srs_version }}.zip
+        checksum: sha512:{{ srs_sha512 }}
+        dest: /opt/srs.zip
+
+    - name: create directory to unarchive srs to
+      file:
+        state: directory
+        dest: /opt/srs/
+
+    - name: unarchive srs
+      unarchive:
+        src:
+          /opt/srs.zip
+        remote_src: true
+        dest: /opt/srs/
+      notify:
+        - restart srs
+
+    - name: create srs config file
+      copy:
+        src: srs/srs.conf
+        dest: /etc/srs.conf
+        force: true
+      notify:
+        - restart srs
+
+    # Do not use the `INSTALL` script from SRS, but simply create a minimal
+    # service file to start SRS properly
+    - name: create srs service file
+      copy:
+        content: |
+            [Unit]
+            Description=The SRS Media Stream Cluster
+            After=network.target
+
+            [Service]
+            ExecStart=/opt/srs/{{ srs_version }}/usr/local/srs/objs/srs -c /etc/srs.conf
+            WorkingDirectory=/opt/srs/{{ srs_version }}/usr/local/srs/
+
+            [Install]
+            WantedBy=multi-user.target
+        dest: /etc/systemd/system/srs.service
+      notify:
+        - reload systemd
+        - restart srs
+
+    - name: enable and start srs
+      service:
+        name: srs
+        state: started
+        enabled: true
+
+    - name: http and https firewall settings
+      firewalld:
+        service: "{{ item }}"
+        permanent: true
+        state: enabled
+      with_items:
+        - http
+        - https
+      notify: reload firewalld
+
+    # This should probably only be accessible from withing the internal
+    # network. With this configuration everybody can publish videos.
+    - name: rtmp firewall settings (should probably be more restrictive)
+      firewalld:
+        port: 1935/tcp
+        permanent: true
+        state: enabled
+      notify: reload firewalld
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: restart srs
+      service:
+        name: srs
+        state: restarted
+
+    - name: reload firewalld
+      service:
+        name: firewalld
+        state: reloaded
