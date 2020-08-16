@@ -8,6 +8,10 @@ It seems like both servers `nginx-rtmp.stream.uos.de` and `srs.stream.uos.de` ha
 The DNS entries have other IPv6 addresses configured than the VMs itself and they seem to be not reachable via IPv6.
 So if there are any problems with accessing the VMs, fix the DNS entries, the VMs or, for testing, simply use the IPv4 address instead of the DNS name.
 
+The setups are not ready for production. So, e.g., there is no TLS, and pushing RTMP streams to the servers is possibly from everywhere.
+So the services `nginx` and `srs` respectively are stopped manually after the installation.
+Also some manual steps were done on the VMs to ease the development, like installing administrative tools like `net-tools` or `policycoreutils-python-utils`.
+
 ## Nginx RTMP
 
 The configuration for the server `nginx-rtmp.stream.uos.de` is done with the playbook [nginx-rtmp.yml](./nginx-rtmp.yml) and is hopefully self-explanatory and sufficiently commented.
