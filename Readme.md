@@ -31,6 +31,8 @@ which build is a modified version of the NGINX packaging for Centos 8 and theref
 
 Unfortunately it seems like the NGINX RTMP module does not support deliver different dash variants, but there are [forks](https://github.com/justcodingtv/nginx-rtmp-module) that support this.
 
+Another major downside is the fact that the last commit on the repository is from 2017.
+
 ### Create Stream
 
 ```bash
